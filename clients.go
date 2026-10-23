@@ -60,6 +60,9 @@ func unwireClients(cfg *Config, prog *Progress) {
 			prog.Add("detached the relay from %s", c)
 		}
 	}
+	if cfg.Container != "" {
+		unwireContainer(cfg, prog)
+	}
 	if cfg.Sandbox != "" {
 		if _, err := exec.LookPath("sbx"); err == nil {
 			if _, err := sbxRun(cfg.MCPToken, "mcp", "rm", "--force", cfg.SbxMCPName()); err == nil {

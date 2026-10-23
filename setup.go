@@ -29,6 +29,7 @@ type SetupRequest struct {
 	Name      string          `json:"name"`
 	Workspace string          `json:"workspace"`
 	Sandbox   string          `json:"sandbox"`
+	Container string          `json:"container,omitempty"`
 	Clients   []string        `json:"clients,omitempty"`
 	Tags      []string        `json:"tags"`
 	Peers     map[string]Peer `json:"peers"`
@@ -61,9 +62,13 @@ func (p *Progress) Lines() []string {
 
 // ApplySetup writes config and workspace, starts the relay and wires the sandbox; the caller owns the returned relay.
 func ApplySetup(ctx context.Context, req SetupRequest, prog *Progress) (*Config, *Running, error) {
-	cfg := &Config{Name: req.Name, Workspace: req.Workspace, Sandbox: req.Sandbox, Clients: req.Clients, Tags: req.Tags, Peers: req.Peers}
+	cfg := &Config{Name: req.Name, Workspace: req.Workspace, Sandbox: req.Sandbox, Container: req.Container, Clients: req.Clients,
+		Tags: req.Tags, Peers: req.Peers}
 	if prev, err := LoadConfig(); err == nil {
-		cfg.MCPListen, cfg.SelfLogin, cfg.JoinKey = prev.MCPListen, prev.SelfLogin, prev.JoinKey
+		cfg.MCPListen, cfg.SelfLogin, cfg.JoinKey, cfg.ContainerCLI = prev.MCPListen, prev.SelfLogin, prev.JoinKey, prev.ContainerCLI
+	}
+	if cfg.Container != "" && cfg.ContainerCLI == "" {
+		cfg.ContainerCLI = detectContainerCLI()
 	}
 	if err := cfg.Normalize(); err != nil {
 		return nil, nil, err
@@ -100,7 +105,7 @@ func ApplySetup(ctx context.Context, req SetupRequest, prog *Progress) (*Config,
 	return cfg, run, nil
 }
 
-// FinishSetup waits for the tailnet, records this node's identity and wires sbx.
+// FinishSetup waits for the tailnet, records this node's identity and wires the sandboxes.
 func FinishSetup(ctx context.Context, cfg *Config, run *Running, prog *Progress) error {
 	announced := false
 	for {
@@ -146,6 +151,11 @@ func FinishSetup(ctx context.Context, cfg *Config, run *Running, prog *Progress)
 	}
 	if err := wireClients(cfg, prog); err != nil {
 		return err
+	}
+	if cfg.Container != "" {
+		if err := wireContainer(cfg, prog); err != nil {
+			return err
+		}
 	}
 	if cfg.Sandbox == "" {
 		return nil

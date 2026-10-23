@@ -42,7 +42,7 @@ type initAnswers struct {
 	Handle    string
 	Name      string
 	Workspace string
-	Targets   []string // sbx, claude, codex
+	Targets   []string // sbx, container, claude, codex
 	CloseOpen bool
 }
 
@@ -55,7 +55,7 @@ func cmdInit(args []string) error {
 	handle := fs.String("handle", "", "your handle; your machines get tag:agent-<handle>")
 	workspace := fs.String("workspace", "", "folder your agent works in")
 	var targets listFlag
-	fs.Var(&targets, "agent", "where to attach the relay: sbx, claude or codex; repeatable (default: detected)")
+	fs.Var(&targets, "agent", "where to attach the relay: sbx, container, claude or codex; repeatable (default: detected)")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "agent-relay init: guided setup. With --yes, pass --host or --join and the flags below.")
 		fs.PrintDefaults()
@@ -129,16 +129,22 @@ func fillDefaults(a *initAnswers, prev *Config) {
 	a.Token = loadAPIToken()
 }
 
-// detectedTargets lists installed agent runners; preferred keeps only the sandbox when sbx exists.
+// detectedTargets lists installed agent runners; preferred keeps only a sandbox when one exists, sbx first.
 func detectedTargets(preferred bool) []string {
 	var out []string
-	for _, t := range []string{"sbx", "claude", "codex"} {
-		if _, err := exec.LookPath(t); err == nil {
+	for _, t := range []string{"sbx", "container", "claude", "codex"} {
+		bin := t
+		if t == "container" {
+			bin = detectContainerCLI()
+		}
+		if _, err := exec.LookPath(bin); bin != "" && err == nil {
 			out = append(out, t)
 		}
 	}
-	if preferred && slices.Contains(out, "sbx") {
-		return []string{"sbx"}
+	for _, sandbox := range []string{"sbx", "container"} {
+		if preferred && slices.Contains(out, sandbox) {
+			return []string{sandbox}
+		}
 	}
 	if preferred && len(out) > 1 {
 		return out[:1]
@@ -182,12 +188,13 @@ func targetField(a *initAnswers) huh.Field {
 	found := detectedTargets(false)
 	if len(found) == 0 {
 		return huh.NewNote().Title("No agent found").
-			Description("Install Claude Code, Codex or Docker Sandboxes (sbx), then run init again. The relay works without them.")
+			Description("Install Claude Code, Codex, Docker Sandboxes (sbx) or a container runtime (Colima, Docker Engine, Podman), then run init again. The relay works without them.")
 	}
 	labels := map[string]string{
-		"sbx":    "Docker sandbox (sbx): Claude runs isolated, recommended",
-		"claude": "Claude Code on this machine (workspace folder only)",
-		"codex":  "Codex on this machine (all Codex sessions)",
+		"sbx":       "Docker sandbox (sbx): Claude runs isolated, recommended",
+		"container": "Container (Colima, Docker Engine, Podman): Claude runs isolated, no Docker account",
+		"claude":    "Claude Code on this machine (workspace folder only)",
+		"codex":     "Codex on this machine (all Codex sessions)",
 	}
 	var opts []huh.Option[string]
 	for _, t := range found {
@@ -342,9 +349,12 @@ func isDedicated(devices []Device) bool {
 func requestBase(a *initAnswers) SetupRequest {
 	req := SetupRequest{Name: a.Name, Workspace: expandHome(strings.TrimSpace(a.Workspace)), Peers: map[string]Peer{}}
 	for _, t := range a.Targets {
-		if t == "sbx" {
+		switch t {
+		case "sbx":
 			req.Sandbox = "relay-" + a.Name
-		} else {
+		case "container":
+			req.Container = "relay-" + a.Name
+		default:
 			req.Clients = append(req.Clients, t)
 		}
 	}
@@ -365,7 +375,7 @@ func keepPeers(req *SetupRequest, prev *Config) {
 func applyJoin(ctx context.Context, a *initAnswers, inv Invite, prev *Config) error {
 	base := requestBase(a)
 	req := RequestFromInvite(inv, base.Workspace, base.Sandbox)
-	req.Clients = base.Clients
+	req.Clients, req.Container = base.Clients, base.Container
 	keepPeers(&req, prev)
 	if err := runSetup(ctx, req); err != nil {
 		return err
@@ -445,7 +455,7 @@ func printNext(req SetupRequest) {
 	fmt.Println()
 	fmt.Println(titleStyle.Render("Ready.") + " Start an agent session with the relay up:")
 	fmt.Println("  agent-relay run")
-	if req.Sandbox != "" {
+	if req.Sandbox != "" || req.Container != "" {
 		fmt.Println(dimStyle.Render("  First time: log Claude in inside the sandbox when it asks."))
 	}
 }

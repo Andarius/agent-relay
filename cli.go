@@ -44,6 +44,7 @@ func cmdSetup(args []string) error {
 	name := fs.String("name", "", "this machine's agent name")
 	workspace := fs.String("workspace", "", "agent workspace folder")
 	sandbox := fs.String("sandbox", "", "sbx sandbox to create or wire (empty: none)")
+	container := fs.String("container", "", "container sandbox name, run with docker or podman (empty: none)")
 	invite := fs.String("invite", "", "invite from a friend (fills name, tags and peer)")
 	newNode := fs.Bool("new-node", false, "start a new tailnet identity (moves the old one aside)")
 	var tags, peers listFlag
@@ -68,6 +69,7 @@ func cmdSetup(args []string) error {
 		req = RequestFromInvite(inv, *workspace, *sandbox)
 		req.NewNode = req.NewNode || *newNode
 	}
+	req.Container = *container
 	for _, p := range peers {
 		n, peer, err := parsePeer(p)
 		if err != nil {

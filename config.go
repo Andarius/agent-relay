@@ -21,16 +21,18 @@ type Peer struct {
 
 // Config is the relay's persistent configuration (~/.config/agent-relay/config.json).
 type Config struct {
-	Name      string          `json:"name"`
-	Hostname  string          `json:"hostname"`
-	Tags      []string        `json:"tags,omitempty"`
-	Peers     map[string]Peer `json:"peers"`
-	Workspace string          `json:"workspace,omitempty"`
-	Sandbox   string          `json:"sandbox,omitempty"`
-	Clients   []string        `json:"clients,omitempty"`
-	MCPListen string          `json:"mcp_listen"`
-	SelfLogin string          `json:"self_login,omitempty"`
-	JoinKey   string          `json:"join_key,omitempty"` // SHA-256 of the auth key this identity joined with
+	Name         string          `json:"name"`
+	Hostname     string          `json:"hostname"`
+	Tags         []string        `json:"tags,omitempty"`
+	Peers        map[string]Peer `json:"peers"`
+	Workspace    string          `json:"workspace,omitempty"`
+	Sandbox      string          `json:"sandbox,omitempty"`
+	Container    string          `json:"container,omitempty"`
+	ContainerCLI string          `json:"container_cli,omitempty"` // docker (Colima, Docker Engine) or podman; empty: docker
+	Clients      []string        `json:"clients,omitempty"`
+	MCPListen    string          `json:"mcp_listen"`
+	SelfLogin    string          `json:"self_login,omitempty"`
+	JoinKey      string          `json:"join_key,omitempty"` // SHA-256 of the auth key this identity joined with
 
 	StateDir string `json:"-"`
 	MCPToken string `json:"-"`
@@ -104,6 +106,14 @@ func (c *Config) Normalize() error {
 		}
 		if c.Workspace == "" {
 			return fmt.Errorf("client %s needs a workspace folder", cl)
+		}
+	}
+	if c.Container != "" {
+		if !nameRe.MatchString(c.Container) {
+			return fmt.Errorf("container %q: use lowercase letters, digits and dashes", c.Container)
+		}
+		if c.Workspace == "" {
+			return fmt.Errorf("container %s needs a workspace folder", c.Container)
 		}
 	}
 	if c.Workspace != "" {

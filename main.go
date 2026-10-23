@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -31,7 +32,7 @@ const usage = `agent-relay: let AI agents on different machines message each oth
 Usage:
   agent-relay init [flags]       guided setup in the terminal: join with an invite or start your own network
   agent-relay setup [flags]      configure this machine (opens a local setup page; --cli for flags only)
-  agent-relay run [-- CMD ...]   run the relay for one agent session (default CMD: sbx run --name <sandbox>)
+  agent-relay run [-- CMD ...]   run the relay for one agent session (default CMD: the configured sandbox or agent)
   agent-relay serve              run the relay until interrupted
   agent-relay invite FRIEND ...  create an invite for a friend or another machine of yours (see -h)
   agent-relay uninstall          detach the relay from your agents and forget this machine's identity
@@ -102,11 +103,16 @@ func cmdRun(args []string) error {
 	if len(args) > 0 && args[0] == "--" {
 		args = args[1:]
 	}
-	dir := ""
+	dir, env := "", []string(nil)
 	if len(args) == 0 {
 		switch {
 		case cfg.Sandbox != "":
 			args = []string{"sbx", "run", "--name", cfg.Sandbox}
+		case cfg.Container != "":
+			if err := ensureImage(cfg, &Progress{echo: true}); err != nil {
+				return err
+			}
+			args, env = containerCommand(cfg, runtime.GOOS)
 		case len(cfg.Clients) > 0:
 			args, dir = []string{cfg.Clients[0]}, cfg.Workspace
 		default:
@@ -137,6 +143,9 @@ func cmdRun(args []string) error {
 	signal.Ignore(os.Interrupt)
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir, cmd.Stdin, cmd.Stdout, cmd.Stderr = dir, os.Stdin, os.Stdout, os.Stderr
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	return cmd.Run()
 }
 

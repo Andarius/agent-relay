@@ -47,6 +47,8 @@ Each invite holds a single-use key valid 7 days: send it privately.
 to the agents you pick:
 
 - **Docker sandbox (sbx)**: a sandbox `relay-<name>` with Claude inside. Log Claude in on first run.
+- **Container (Colima, Docker Engine, Podman)**: Claude in a throwaway container `relay-<name>`, without Docker
+  Desktop or a Docker account. See [Container sandbox](#container-sandbox).
 - **Claude Code**: local scope, only when Claude runs in the workspace folder.
 - **Codex**: user-wide, Codex has no per-folder MCP scope.
 
@@ -56,11 +58,32 @@ API token is saved. `agent-relay setup` opens the same configuration as a local 
 Scripted setups: `TS_API_KEY=… agent-relay init --yes --host --handle you --name laptop`, or
 `AGENT_RELAY_INVITE=… agent-relay init --yes --join`.
 
+## Container sandbox
+
+For an open-source runtime instead of sbx: [Colima](https://github.com/abiosoft/colima) on macOS, Docker Engine or
+Podman on Linux. Init offers it when `docker` (or `podman`) is installed, and picks it by default when sbx is not;
+`agent-relay setup --cli --container relay-<name>` sets it up from flags.
+
+- The image `agent-relay-claude:<hash>` (Node, git, Claude Code) is built locally on first use, from a Dockerfile
+  inside the binary: no registry login. A new agent-relay version with a changed Dockerfile rebuilds it.
+- `agent-relay run` starts `docker run -it --rm` with only the workspace mounted (`/workspace`) and a volume
+  `relay-<name>-home` that keeps Claude's login. Log Claude in on the first run.
+- Claude reaches the relay at `host.docker.internal`, which Colima routes to the host's loopback, so the relay keeps
+  listening on `127.0.0.1` only. On Linux the container shares the host network instead (`--network host`).
+- The MCP URL, which holds the token, reaches the container through the environment, never the command line.
+- Colima shares only your home folder by default: keep the workspace under it, or add a mount in
+  `colima template`.
+- Limits: no outbound network filtering (sbx has one); Claude can reach any host. Windows is untested. The setup
+  page (`agent-relay setup` without `--cli`) does not offer this mode yet.
+
+`agent-relay uninstall` removes the volume and the image.
+
 ## Security model
 
 - A message is accepted only from a configured peer whose Tailscale node matches both its hostname and its
   exact tag or login. The sender is taken from Tailscale, never from the message.
-- The local MCP endpoint needs a per-machine token. Sandboxed agents reach it through the sbx gateway, never directly.
+- The local MCP endpoint needs a per-machine token. Sbx agents reach it through the sbx gateway; container agents
+  call it directly with the token, from inside the container.
 - Messages from other agents are untrusted data. The workspace instructions tell your agent to report what a
   message asks rather than act on it.
 - The API token stays on the network owner's machine (`~/.config/agent-relay/api-token`, mode 0600); it can edit

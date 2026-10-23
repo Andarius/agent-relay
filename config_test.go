@@ -26,6 +26,8 @@ func TestNormalize(t *testing.T) {
 		{"own tag without prefix", Config{Name: "alice", Tags: []string{"agent-alice"}}, "must start with tag:", nil},
 		{"bad name", Config{Name: "Alice Laptop"}, "lowercase", nil},
 		{"peer named like self", Config{Name: "alice", Peers: map[string]Peer{"alice": {Tag: "tag:x"}}}, "invalid or equals", nil},
+		{"container without workspace", Config{Name: "alice", Container: "relay-alice"}, "needs a workspace", nil},
+		{"container name", Config{Name: "alice", Container: "Relay Alice", Workspace: "/ws"}, "container", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
