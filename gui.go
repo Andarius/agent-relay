@@ -24,8 +24,9 @@ var setupHTML []byte
 
 // setupUI serves the local setup page; one relay may run while the page is open.
 type setupUI struct {
-	token string
-	addr  string
+	token  string
+	addr   string
+	bypass bool
 
 	mu   sync.Mutex
 	run  *Running
@@ -36,7 +37,7 @@ type setupUI struct {
 	done chan struct{}
 }
 
-func runSetupGUI(open bool) error {
+func runSetupGUI(open, bypass bool) error {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return err
@@ -45,7 +46,8 @@ func runSetupGUI(open bool) error {
 	if _, err := rand.Read(buf); err != nil {
 		return err
 	}
-	ui := &setupUI{token: hex.EncodeToString(buf), addr: ln.Addr().String(), prog: &Progress{}, done: make(chan struct{})}
+	ui := &setupUI{token: hex.EncodeToString(buf), addr: ln.Addr().String(), prog: &Progress{}, done: make(chan struct{}),
+		bypass: bypass}
 	if cfg, err := LoadConfig(); err == nil {
 		ui.cfg = cfg
 	}
@@ -150,6 +152,7 @@ func (ui *setupUI) apply(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	req.Bypass = ui.bypass
 	ui.mu.Lock()
 	if ui.busy {
 		ui.mu.Unlock()

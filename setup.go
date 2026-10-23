@@ -34,6 +34,33 @@ type SetupRequest struct {
 	Peers     map[string]Peer `json:"peers"`
 	AuthKey   string          `json:"authkey,omitempty"`
 	NewNode   bool            `json:"new_node"`
+	Bypass    bool            `json:"-"` // allows agents outside a sandbox; only the --bypass flag sets it
+}
+
+// requireSbx fails when sbx is missing, unless the user passed --bypass.
+func requireSbx(bypass bool) error {
+	if _, err := exec.LookPath("sbx"); err != nil && !bypass {
+		return errors.New("sbx not found: install Docker Sandboxes (sbx) so the agent runs isolated, " +
+			"or pass --bypass to use an unsandboxed agent")
+	}
+	return nil
+}
+
+// requireSandbox keeps agents inside an sbx sandbox unless the user passed --bypass.
+func requireSandbox(sandbox string, clients []string, bypass bool) error {
+	if bypass {
+		return nil
+	}
+	if err := requireSbx(false); err != nil {
+		return err
+	}
+	if len(clients) > 0 {
+		return fmt.Errorf("%s would run outside a sandbox: pick the sbx sandbox, or pass --bypass", strings.Join(clients, ", "))
+	}
+	if sandbox == "" {
+		return errors.New("no sandbox set: the agent must run in an sbx sandbox, or pass --bypass to attach it yourself")
+	}
+	return nil
 }
 
 // Progress collects human-readable setup steps for the CLI and the page.
@@ -61,6 +88,9 @@ func (p *Progress) Lines() []string {
 
 // ApplySetup writes config and workspace, starts the relay and wires the sandbox; the caller owns the returned relay.
 func ApplySetup(ctx context.Context, req SetupRequest, prog *Progress) (*Config, *Running, error) {
+	if err := requireSandbox(req.Sandbox, req.Clients, req.Bypass); err != nil {
+		return nil, nil, err
+	}
 	cfg := &Config{Name: req.Name, Workspace: req.Workspace, Sandbox: req.Sandbox, Clients: req.Clients, Tags: req.Tags, Peers: req.Peers}
 	if prev, err := LoadConfig(); err == nil {
 		cfg.MCPListen, cfg.SelfLogin, cfg.JoinKey = prev.MCPListen, prev.SelfLogin, prev.JoinKey

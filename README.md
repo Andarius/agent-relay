@@ -44,11 +44,12 @@ Each invite holds a single-use key valid 7 days: send it privately.
 ## Use it
 
 `agent-relay run` starts the relay for one agent session and stops it when the session ends. Init attaches the relay
-to the agents you pick:
+to a Docker sandbox (`sbx`) named `relay-<name>` with Claude inside; log
+Claude in on first run. Without `sbx`, `init` and `setup` stop and ask you to install it.
 
-- **Docker sandbox (sbx)**: a sandbox `relay-<name>` with Claude inside. Log Claude in on first run.
-- **Claude Code**: local scope, only when Claude runs in the workspace folder.
-- **Codex**: user-wide, Codex has no per-folder MCP scope.
+To skip the sandbox, pass `--bypass`: init then also offers Claude Code (local scope, only when Claude runs in the
+workspace folder) and Codex (user-wide, Codex has no per-folder MCP scope). Unsandboxed agents run with your own
+permissions, so a message from another agent reaches an agent that can act on your machine.
 
 `agent-relay uninstall` detaches it, deletes this machine's identity and messages, and removes its node when an
 API token is saved. `agent-relay setup` opens the same configuration as a local web page.

@@ -44,6 +44,7 @@ type initAnswers struct {
 	Workspace string
 	Targets   []string // sbx, claude, codex
 	CloseOpen bool
+	Bypass    bool
 }
 
 func cmdInit(args []string) error {
@@ -55,7 +56,8 @@ func cmdInit(args []string) error {
 	handle := fs.String("handle", "", "your handle; your machines get tag:agent-<handle>")
 	workspace := fs.String("workspace", "", "folder your agent works in")
 	var targets listFlag
-	fs.Var(&targets, "agent", "where to attach the relay: sbx, claude or codex; repeatable (default: detected)")
+	fs.Var(&targets, "agent", "where to attach the relay: sbx, or claude/codex with --bypass; repeatable (default: detected)")
+	bypass := fs.Bool("bypass", false, "allow an agent outside an sbx sandbox (Claude Code or Codex on this machine)")
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "agent-relay init: guided setup. With --yes, pass --host or --join and the flags below.")
 		fs.PrintDefaults()
@@ -64,7 +66,7 @@ func cmdInit(args []string) error {
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	prev, _ := LoadConfig()
-	a := initAnswers{Name: *name, Handle: *handle, Workspace: *workspace, Targets: targets}
+	a := initAnswers{Name: *name, Handle: *handle, Workspace: *workspace, Targets: targets, Bypass: *bypass}
 	switch {
 	case *host:
 		a.Mode = "host"
@@ -72,6 +74,11 @@ func cmdInit(args []string) error {
 		a.Mode = "join"
 	}
 	fillDefaults(&a, prev)
+	// Fail before any invite, key or policy change is spent.
+	base := requestBase(&a)
+	if err := requireSandbox(base.Sandbox, base.Clients, a.Bypass); err != nil {
+		return err
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -180,6 +187,9 @@ func runWizard(ctx context.Context, a *initAnswers, prev *Config) error {
 
 func targetField(a *initAnswers) huh.Field {
 	found := detectedTargets(false)
+	if !a.Bypass {
+		found = slices.DeleteFunc(found, func(t string) bool { return t != "sbx" })
+	}
 	if len(found) == 0 {
 		return huh.NewNote().Title("No agent found").
 			Description("Install Claude Code, Codex or Docker Sandboxes (sbx), then run init again. The relay works without them.")
@@ -340,7 +350,7 @@ func isDedicated(devices []Device) bool {
 // Apply
 
 func requestBase(a *initAnswers) SetupRequest {
-	req := SetupRequest{Name: a.Name, Workspace: expandHome(strings.TrimSpace(a.Workspace)), Peers: map[string]Peer{}}
+	req := SetupRequest{Name: a.Name, Workspace: expandHome(strings.TrimSpace(a.Workspace)), Peers: map[string]Peer{}, Bypass: a.Bypass}
 	for _, t := range a.Targets {
 		if t == "sbx" {
 			req.Sandbox = "relay-" + a.Name
@@ -365,7 +375,7 @@ func keepPeers(req *SetupRequest, prev *Config) {
 func applyJoin(ctx context.Context, a *initAnswers, inv Invite, prev *Config) error {
 	base := requestBase(a)
 	req := RequestFromInvite(inv, base.Workspace, base.Sandbox)
-	req.Clients = base.Clients
+	req.Clients, req.Bypass = base.Clients, base.Bypass
 	keepPeers(&req, prev)
 	if err := runSetup(ctx, req); err != nil {
 		return err
@@ -376,6 +386,10 @@ func applyJoin(ctx context.Context, a *initAnswers, inv Invite, prev *Config) er
 
 func applyHost(ctx context.Context, a *initAnswers, api *TSAPI, devices []Device, prev *Config, interactive bool) error {
 	tag := agentTagPrefix + a.Handle
+	req := requestBase(a)
+	if err := requireSandbox(req.Sandbox, req.Clients, req.Bypass); err != nil {
+		return err
+	}
 	prog := &Progress{echo: true}
 	plan, err := api.EnsureTags(ctx, []string{tag}, a.CloseOpen)
 	if err != nil {
@@ -391,7 +405,6 @@ func applyHost(ctx context.Context, a *initAnswers, api *TSAPI, devices []Device
 		prog.Add("API token saved for later invites")
 	}
 
-	req := requestBase(a)
 	req.Tags = []string{tag}
 	keepPeers(&req, prev)
 	hostname := "relay-" + a.Name

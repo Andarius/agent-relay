@@ -77,3 +77,35 @@ func TestWireSandboxUsesPerInstallEntry(t *testing.T) {
 		})
 	}
 }
+
+func TestRequireSandbox(t *testing.T) {
+	tests := []struct {
+		name    string
+		hasSbx  bool
+		sandbox string
+		clients []string
+		bypass  bool
+		wantErr string
+	}{
+		{"sandbox", true, "relay-alice", nil, false, ""},
+		{"sbx missing", false, "relay-alice", nil, false, "sbx not found"},
+		{"unsandboxed client", true, "", []string{"claude"}, false, "claude would run outside a sandbox"},
+		{"no sandbox at all", true, "", nil, false, "no sandbox set"},
+		{"bypass without sbx", false, "", []string{"claude"}, true, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bin := t.TempDir()
+			if tt.hasSbx {
+				if err := os.WriteFile(filepath.Join(bin, "sbx"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("PATH", bin)
+			err := requireSandbox(tt.sandbox, tt.clients, tt.bypass)
+			if tt.wantErr == "" && err != nil || tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Errorf("err=%v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}

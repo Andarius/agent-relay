@@ -46,6 +46,7 @@ func cmdSetup(args []string) error {
 	sandbox := fs.String("sandbox", "", "sbx sandbox to create or wire (empty: none)")
 	invite := fs.String("invite", "", "invite from a friend (fills name, tags and peer)")
 	newNode := fs.Bool("new-node", false, "start a new tailnet identity (moves the old one aside)")
+	bypass := fs.Bool("bypass", false, "allow no sandbox: you attach the relay to an unsandboxed agent yourself")
 	var tags, peers listFlag
 	fs.Var(&tags, "tag", "tag this relay advertises, e.g. tag:agent-alice; repeatable")
 	fs.Var(&peers, "peer", "NAME=tag:…|login[,host=HOST]; repeatable")
@@ -55,7 +56,10 @@ func cmdSetup(args []string) error {
 	}
 	_ = fs.Parse(args)
 	if !*cli {
-		return runSetupGUI(!*noOpen)
+		if err := requireSbx(*bypass); err != nil {
+			return err
+		}
+		return runSetupGUI(!*noOpen, *bypass)
 	}
 
 	req := SetupRequest{Name: *name, Workspace: *workspace, Sandbox: *sandbox, Tags: tags, Peers: map[string]Peer{},
@@ -68,6 +72,7 @@ func cmdSetup(args []string) error {
 		req = RequestFromInvite(inv, *workspace, *sandbox)
 		req.NewNode = req.NewNode || *newNode
 	}
+	req.Bypass = *bypass
 	for _, p := range peers {
 		n, peer, err := parsePeer(p)
 		if err != nil {
