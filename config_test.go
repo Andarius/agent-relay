@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -143,5 +146,39 @@ func TestPolicySnippetListsExactTags(t *testing.T) {
 	}
 	if policySnippet(&Config{Name: "x"}) != "" {
 		t.Fatal("untagged config should give no snippet")
+	}
+}
+
+func TestPrepareIdentity(t *testing.T) {
+	hash := func(k string) string { s := sha256.Sum256([]byte(k)); return hex.EncodeToString(s[:]) }
+	used := hash("tskey-auth-used")
+	tests := []struct {
+		name     string
+		req      SetupRequest
+		wantKept bool
+		wantJoin string
+	}{
+		{"rerun with the same invite keeps the identity", SetupRequest{NewNode: true, AuthKey: "tskey-auth-used"}, true, used},
+		{"new invite moves the identity aside", SetupRequest{NewNode: true, AuthKey: "tskey-auth-new"}, false, hash("tskey-auth-new")},
+		{"login without key moves the identity aside", SetupRequest{NewNode: true}, false, ""},
+		{"not a new node", SetupRequest{AuthKey: "tskey-auth-new"}, true, used},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{StateDir: t.TempDir(), JoinKey: used}
+			dir := filepath.Join(cfg.StateDir, "tsnet")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := prepareIdentity(cfg, tt.req, &Progress{}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(dir); (err == nil) != tt.wantKept {
+				t.Errorf("identity kept=%v, want %v", err == nil, tt.wantKept)
+			}
+			if cfg.JoinKey != tt.wantJoin {
+				t.Errorf("JoinKey=%q, want %q", cfg.JoinKey, tt.wantJoin)
+			}
+		})
 	}
 }

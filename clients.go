@@ -62,7 +62,7 @@ func unwireClients(cfg *Config, prog *Progress) {
 	}
 	if cfg.Sandbox != "" {
 		if _, err := exec.LookPath("sbx"); err == nil {
-			if _, err := sbxRun(cfg.MCPToken, "mcp", "rm", "--force", "agent-relay"); err == nil {
+			if _, err := sbxRun(cfg.MCPToken, "mcp", "rm", "--force", cfg.SbxMCPName()); err == nil {
 				prog.Add("removed the relay from sbx; delete the sandbox with: sbx rm %s", cfg.Sandbox)
 			}
 		}

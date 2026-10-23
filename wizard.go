@@ -459,6 +459,24 @@ func inviteWithKey(ctx context.Context, api *TSAPI, cfg *Config, name, tag strin
 			return Invite{}, err
 		}
 	}
+	// A node already holding relay-<name> makes Tailscale suffix the joiner's name, which peers then reject.
+	host := "relay-" + name
+	devices, err := api.Devices(ctx)
+	if err != nil {
+		return Invite{}, err
+	}
+	for _, d := range devices {
+		if d.ShortName() != host {
+			continue
+		}
+		if !slices.Contains(d.Tags, tag) {
+			return Invite{}, fmt.Errorf("the tailnet already has a %s node not tagged %s: remove or rename it in the admin console first", host, tag)
+		}
+		if err := api.DeleteDevice(ctx, d.ID); err != nil {
+			return Invite{}, err
+		}
+		fmt.Fprintf(os.Stderr, "removed the previous %s node from the tailnet\n", host)
+	}
 	key, err := api.CreateKey(ctx, []string{tag}, "agent-relay "+name, 7*24*time.Hour)
 	if err != nil {
 		return Invite{}, err

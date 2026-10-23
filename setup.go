@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	_ "embed"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,7 +63,7 @@ func (p *Progress) Lines() []string {
 func ApplySetup(ctx context.Context, req SetupRequest, prog *Progress) (*Config, *Running, error) {
 	cfg := &Config{Name: req.Name, Workspace: req.Workspace, Sandbox: req.Sandbox, Clients: req.Clients, Tags: req.Tags, Peers: req.Peers}
 	if prev, err := LoadConfig(); err == nil {
-		cfg.MCPListen, cfg.SelfLogin = prev.MCPListen, prev.SelfLogin
+		cfg.MCPListen, cfg.SelfLogin, cfg.JoinKey = prev.MCPListen, prev.SelfLogin, prev.JoinKey
 	}
 	if err := cfg.Normalize(); err != nil {
 		return nil, nil, err
@@ -69,16 +71,8 @@ func ApplySetup(ctx context.Context, req SetupRequest, prog *Progress) (*Config,
 	if mcpUp(cfg.MCPListen) {
 		return nil, nil, fmt.Errorf("a relay is already running on %s; end that session first", cfg.MCPListen)
 	}
-	if req.NewNode {
-		dir := filepath.Join(cfg.StateDir, "tsnet")
-		if _, err := os.Stat(dir); err == nil {
-			bak := dir + ".bak-" + time.Now().Format("20060102-150405")
-			if err := os.Rename(dir, bak); err != nil {
-				return nil, nil, err
-			}
-			prog.Add("previous tailnet identity moved to %s", bak)
-		}
-		cfg.SelfLogin = ""
+	if err := prepareIdentity(cfg, req, prog); err != nil {
+		return nil, nil, err
 	}
 	if err := cfg.Save(); err != nil {
 		return nil, nil, err
@@ -163,6 +157,33 @@ func FinishSetup(ctx context.Context, cfg *Config, run *Running, prog *Progress)
 	return wireSandbox(cfg, prog)
 }
 
+// prepareIdentity moves the tailnet identity aside for a new node, unless it joined with this same single-use key.
+func prepareIdentity(cfg *Config, req SetupRequest, prog *Progress) error {
+	if !req.NewNode {
+		return nil
+	}
+	dir := filepath.Join(cfg.StateDir, "tsnet")
+	_, statErr := os.Stat(dir)
+	var joinKey string
+	if req.AuthKey != "" {
+		sum := sha256.Sum256([]byte(req.AuthKey))
+		joinKey = hex.EncodeToString(sum[:])
+	}
+	if statErr == nil && joinKey != "" && joinKey == cfg.JoinKey {
+		prog.Add("this invite was already used here: keeping the current tailnet identity")
+		return nil
+	}
+	if statErr == nil {
+		bak := dir + ".bak-" + time.Now().Format("20060102-150405")
+		if err := os.Rename(dir, bak); err != nil {
+			return err
+		}
+		prog.Add("previous tailnet identity moved to %s", bak)
+	}
+	cfg.SelfLogin, cfg.JoinKey = "", joinKey
+	return nil
+}
+
 func writeWorkspace(dir string) error {
 	if err := os.MkdirAll(filepath.Join(dir, ".agent-inbox"), 0o755); err != nil {
 		return err
@@ -194,8 +215,9 @@ func sbxRun(token string, args ...string) (string, error) {
 
 func wireSandbox(cfg *Config, prog *Progress) error {
 	url := fmt.Sprintf("http://%s/mcp/%s", cfg.MCPListen, cfg.MCPToken)
-	_, _ = sbxRun(cfg.MCPToken, "mcp", "rm", "--force", "agent-relay")
-	if out, err := sbxRun(cfg.MCPToken, "mcp", "add", "agent-relay", "--url", url); err != nil {
+	mcpName := cfg.SbxMCPName()
+	_, _ = sbxRun(cfg.MCPToken, "mcp", "rm", "--force", mcpName)
+	if out, err := sbxRun(cfg.MCPToken, "mcp", "add", mcpName, "--url", url); err != nil {
 		return fmt.Errorf("sbx mcp add: %v: %s", err, lastLine(out))
 	}
 	prog.Add("registered the relay with sbx")
@@ -210,8 +232,11 @@ func wireSandbox(cfg *Config, prog *Progress) error {
 		}
 	}
 	if exists {
-		_, _ = sbxRun(cfg.MCPToken, "mcp", "unload", "agent-relay", "--sandbox", cfg.Sandbox)
-		if out, err := sbxRun(cfg.MCPToken, "mcp", "load", "agent-relay", "--sandbox", cfg.Sandbox); err != nil {
+		// "agent-relay" is the shared entry older installs used.
+		for _, old := range []string{"agent-relay", mcpName} {
+			_, _ = sbxRun(cfg.MCPToken, "mcp", "unload", old, "--sandbox", cfg.Sandbox)
+		}
+		if out, err := sbxRun(cfg.MCPToken, "mcp", "load", mcpName, "--sandbox", cfg.Sandbox); err != nil {
 			return fmt.Errorf("sbx mcp load: %v: %s", err, lastLine(out))
 		}
 		prog.Add("reloaded the relay into sandbox %s", cfg.Sandbox)
@@ -220,7 +245,7 @@ func wireSandbox(cfg *Config, prog *Progress) error {
 	if cfg.Workspace == "" {
 		return errors.New("a sandbox needs a workspace folder")
 	}
-	if out, err := sbxRun(cfg.MCPToken, "create", "--name", cfg.Sandbox, "--static-mcp", "agent-relay", "claude", cfg.Workspace); err != nil {
+	if out, err := sbxRun(cfg.MCPToken, "create", "--name", cfg.Sandbox, "--static-mcp", mcpName, "claude", cfg.Workspace); err != nil {
 		return fmt.Errorf("sbx create: %v: %s", err, lastLine(out))
 	}
 	prog.Add("created sandbox %s; log Claude in once with: sbx run --name %s", cfg.Sandbox, cfg.Sandbox)

@@ -30,6 +30,7 @@ type Config struct {
 	Clients   []string        `json:"clients,omitempty"`
 	MCPListen string          `json:"mcp_listen"`
 	SelfLogin string          `json:"self_login,omitempty"`
+	JoinKey   string          `json:"join_key,omitempty"` // SHA-256 of the auth key this identity joined with
 
 	StateDir string `json:"-"`
 	MCPToken string `json:"-"`
@@ -128,6 +129,9 @@ func (c *Config) InboxDir() string {
 	}
 	return filepath.Join(c.Workspace, ".agent-inbox")
 }
+
+// SbxMCPName is this install's sbx MCP entry: sbx entries are global, so each install needs its own.
+func (c *Config) SbxMCPName() string { return "agent-relay-" + c.Name }
 
 func (c *Config) PeerNames() []string {
 	names := make([]string, 0, len(c.Peers))

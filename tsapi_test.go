@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -122,5 +123,52 @@ func TestCreateKeyRequest(t *testing.T) {
 	api.Token = "wrong"
 	if _, err := api.CreateKey(t.Context(), nil, "x", time.Hour); err == nil || !strings.Contains(err.Error(), "rejected") {
 		t.Errorf("want token rejected error, got %v", err)
+	}
+}
+
+func TestInviteClearsNameClash(t *testing.T) {
+	tests := []struct {
+		name        string
+		devices     string
+		wantErr     string
+		wantDeleted []string
+	}{
+		{"no clash", `[{"id":"1","name":"relay-julien.ts.net","tags":["tag:agent-julien"]}]`, "", nil},
+		{"stale node with same tag", `[{"id":"2","name":"relay-mini.ts.net","tags":["tag:agent-julien"]}]`, "", []string{"/device/2"}},
+		{"foreign node holds the name", `[{"id":"3","name":"relay-mini.ts.net"}]`, "not tagged tag:agent-julien", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("AGENT_RELAY_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+			var deleted []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/tailnet/-/devices":
+					_, _ = w.Write([]byte(`{"devices":` + tt.devices + `}`))
+				case r.Method == http.MethodDelete:
+					deleted = append(deleted, r.URL.Path)
+				case r.URL.Path == "/tailnet/-/keys":
+					_, _ = w.Write([]byte(`{"key":"tskey-auth-y"}`))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+			cfg := &Config{Name: "julien", Tags: []string{"tag:agent-julien"}, Peers: map[string]Peer{}, StateDir: t.TempDir()}
+			api := &TSAPI{Base: srv.URL, Token: "tskey-api-x", HTTP: srv.Client()}
+			inv, err := inviteWithKey(t.Context(), api, cfg, "mini", "tag:agent-julien")
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("want error %q, got %v", tt.wantErr, err)
+				}
+				return
+			}
+			if err != nil || inv.AuthKey != "tskey-auth-y" {
+				t.Fatalf("inv=%+v err=%v", inv, err)
+			}
+			if !slices.Equal(deleted, tt.wantDeleted) {
+				t.Errorf("deleted %v, want %v", deleted, tt.wantDeleted)
+			}
+		})
 	}
 }
