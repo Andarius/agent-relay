@@ -1,6 +1,6 @@
 module agent-relay
 
-go 1.27.1
+go 1.27.3
 
 require (
 	github.com/charmbracelet/huh v1.0.0
