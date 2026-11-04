@@ -9,7 +9,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f
 	golang.org/x/term v0.47.0
-	modernc.org/sqlite v1.61.0
+	modernc.org/sqlite v1.61.1
 	tailscale.com v1.104.4
 )
 
