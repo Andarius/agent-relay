@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # DESCRIPTION: install agent-relay for this machine (checksum-verified), then start its guided setup
 # USAGE:
-#   gh release download -R Andarius/agent-relay -p install.sh -O - | bash   # private repo: needs gh + access
-#   bash install.sh                                                         # from an unpacked release folder
+#   curl -fsSL https://github.com/Andarius/agent-relay/releases/latest/download/install.sh | bash
+#   bash install.sh   # from an unpacked release folder
 # EXAMPLES:
 #   … | AGENT_RELAY_DIR=/usr/local/bin bash
 #   … | AGENT_RELAY_NO_INIT=1 bash
@@ -36,7 +36,7 @@ fetch() {
     gh release download -R "$repo" -p "$1" -D "$tmp" --clobber
   else
     curl -fsSL "https://github.com/$repo/releases/latest/download/$1" -o "$tmp/$1" || {
-      echo "Download failed. $repo is private: install gh, run 'gh auth login', and ask its owner for access." >&2
+      echo "Download failed: could not fetch $1 from the latest $repo release." >&2
       exit 1
     }
   fi

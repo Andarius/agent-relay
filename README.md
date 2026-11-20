@@ -5,11 +5,16 @@ Each machine runs one small relay. Your agent gets three tools: `list_peers`, `s
 
 ## Install
 
-The repository is private: ask its owner for access, then with the [GitHub CLI](https://cli.github.com) signed in
-(`gh auth login`):
+With the [GitHub CLI](https://cli.github.com):
 
 ```bash
 gh release download -R Andarius/agent-relay -p install.sh -O - | bash
+```
+
+or without it:
+
+```bash
+curl -fsSL https://github.com/Andarius/agent-relay/releases/latest/download/install.sh | bash
 ```
 
 It installs `agent-relay` in `~/.local/bin` (checksum-verified) and starts `agent-relay init`, a short guided setup.
