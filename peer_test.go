@@ -130,7 +130,7 @@ func TestReceiveIdempotentAndRateLimited(t *testing.T) {
 const cardID = "01a1f963-d635-7cbe-82b0-d6fe93dde960"
 
 func TestCardMessagesAndNotify(t *testing.T) {
-	got := make(chan map[string]string, 1)
+	got := make(chan map[string]string, 2)
 	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		var m map[string]string
 		_ = json.NewDecoder(req.Body).Decode(&m)
@@ -146,13 +146,18 @@ func TestCardMessagesAndNotify(t *testing.T) {
 			t.Fatalf("code = %d (%s)", rec.Code, rec.Body)
 		}
 	}
-	select {
-	case m := <-got:
-		if m["id"] != msgID || m["from"] != "linux-mini" || m["card"] != cardID || m["body"] != "" {
-			t.Fatalf("notified %v", m)
+	// two notifications, in either order: one per message, never with its body
+	notified := map[string]map[string]string{}
+	for range 2 {
+		select {
+		case m := <-got:
+			notified[m["id"]] = m
+		case <-time.After(3 * time.Second):
+			t.Fatal("app not notified")
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("app not notified")
+	}
+	if m := notified[msgID]; m["from"] != "linux-mini" || m["card"] != cardID || m["body"] != "" {
+		t.Fatalf("notified %v", notified)
 	}
 	about, _ := r.store.TakeInbox(context.Background(), false, 10, cardID)
 	rest, _ := r.store.TakeInbox(context.Background(), false, 10, "")
