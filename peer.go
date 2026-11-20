@@ -28,6 +28,10 @@ type Relay struct {
 	client  *http.Client
 	whois   whoIser
 	limiter *limiter
+
+	presence        presenceBook
+	presenceOnce    sync.Once
+	presenceLimiter *limiter
 }
 
 type peerMessage struct {
@@ -43,6 +47,7 @@ func (r *Relay) PeerHandler() http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"name": r.cfg.Name})
 	})
 	mux.HandleFunc("POST /v1/messages", r.receive)
+	mux.HandleFunc("POST /v1/presence", r.receivePresence)
 	return mux
 }
 
