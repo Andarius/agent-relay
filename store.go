@@ -15,6 +15,7 @@ type Message struct {
 	ID         string `json:"id"`
 	From       string `json:"from"`
 	Body       string `json:"body"`
+	Card       string `json:"card,omitempty"`
 	ReceivedAt string `json:"received_at"`
 }
 
@@ -39,6 +40,16 @@ func OpenStore(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
+	// stores made before messages could be about a card
+	var hasCard int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('messages') WHERE name = 'card'`).Scan(&hasCard); err != nil {
+		return nil, fmt.Errorf("read schema: %w", err)
+	}
+	if hasCard == 0 {
+		if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN card TEXT`); err != nil {
+			return nil, fmt.Errorf("add card column: %w", err)
+		}
+	}
 	return &Store{db: db}, nil
 }
 
@@ -47,10 +58,11 @@ func (s *Store) Close() error { return s.db.Close() }
 func now() string { return time.Now().UTC().Format(time.RFC3339) }
 
 // Insert stores a message once; it reports false when the id already exists (a retried delivery).
-func (s *Store) Insert(ctx context.Context, id, direction, peer, body, login string) (bool, error) {
+// card is the Trame card the message is about, or "".
+func (s *Store) Insert(ctx context.Context, id, direction, peer, body, login, card string) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO messages (id, direction, peer, login, body, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		id, direction, peer, login, body, now())
+		`INSERT OR IGNORE INTO messages (id, direction, peer, login, body, card, created_at) VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,
+		id, direction, peer, login, body, card, now())
 	if err != nil {
 		return false, err
 	}
@@ -58,8 +70,8 @@ func (s *Store) Insert(ctx context.Context, id, direction, peer, body, login str
 	return n == 1, err
 }
 
-// TakeInbox returns incoming messages oldest first and marks the unread ones read.
-func (s *Store) TakeInbox(ctx context.Context, includeRead bool, limit int) ([]Message, error) {
+// TakeInbox returns incoming messages oldest first, only those about `card` when it is set, and marks the unread ones read.
+func (s *Store) TakeInbox(ctx context.Context, includeRead bool, limit int, card string) ([]Message, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -69,8 +81,14 @@ func (s *Store) TakeInbox(ctx context.Context, includeRead bool, limit int) ([]M
 	if !includeRead {
 		where += " AND read_at IS NULL"
 	}
+	args := []any{}
+	if card != "" {
+		where += " AND card = ?"
+		args = append(args, card)
+	}
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id, peer, body, created_at, read_at IS NULL FROM messages WHERE `+where+` ORDER BY created_at LIMIT ?`, limit)
+		`SELECT id, peer, body, coalesce(card, ''), created_at, read_at IS NULL FROM messages WHERE `+where+` ORDER BY created_at LIMIT ?`,
+		append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +97,7 @@ func (s *Store) TakeInbox(ctx context.Context, includeRead bool, limit int) ([]M
 	for rows.Next() {
 		var m Message
 		var isUnread bool
-		if err := rows.Scan(&m.ID, &m.From, &m.Body, &m.ReceivedAt, &isUnread); err != nil {
+		if err := rows.Scan(&m.ID, &m.From, &m.Body, &m.Card, &m.ReceivedAt, &isUnread); err != nil {
 			rows.Close()
 			return nil, err
 		}

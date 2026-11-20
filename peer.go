@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -32,6 +33,7 @@ type Relay struct {
 type peerMessage struct {
 	ID   string `json:"id"`
 	Body string `json:"body"`
+	Card string `json:"card,omitempty"` // the Trame card it is about (card ids are shared through the hub)
 }
 
 // PeerHandler serves the tailnet-facing API; the sender is derived from Tailscale identity, never from the payload.
@@ -65,11 +67,15 @@ func (r *Relay) receive(w http.ResponseWriter, req *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id or body"})
 		return
 	}
+	if !validCard(msg.Card) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad card"})
+		return
+	}
 	if !r.limiter.allow(sender) {
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limited"})
 		return
 	}
-	inserted, err := r.store.Insert(req.Context(), msg.ID, "in", sender, msg.Body, login)
+	inserted, err := r.store.Insert(req.Context(), msg.ID, "in", sender, msg.Body, login, msg.Card)
 	if err != nil {
 		slog.Error("store", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "store failed"})
@@ -78,6 +84,7 @@ func (r *Relay) receive(w http.ResponseWriter, req *http.Request) {
 	if inserted {
 		slog.Info("in", "id", msg.ID, "from", sender, "chars", len(msg.Body))
 		r.ringDoorbell(msg.ID, sender)
+		r.notifyApp(msg.ID, sender, msg.Card)
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"id": msg.ID, "status": "accepted"})
 }
@@ -124,6 +131,38 @@ func (r *Relay) ringDoorbell(id, sender string) {
 	if err := os.WriteFile(filepath.Join(r.cfg.InboxDir(), id+".json"), data, 0o644); err != nil {
 		slog.Error("doorbell", "err", err)
 	}
+}
+
+// validCard accepts no card or a card id (a UUID).
+func validCard(card string) bool {
+	if card == "" {
+		return true
+	}
+	_, err := uuid.Parse(card)
+	return err == nil
+}
+
+// notifyApp tells the app running this relay (Trame) that a message arrived; best effort, body-less.
+func (r *Relay) notifyApp(id, sender, card string) {
+	if r.cfg.Notify == "" {
+		return
+	}
+	data, _ := json.Marshal(map[string]string{"id": id, "from": sender, "card": card})
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.cfg.Notify, bytes.NewReader(data))
+		if err != nil {
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			slog.Warn("notify", "err", err)
+			return
+		}
+		resp.Body.Close()
+	}()
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

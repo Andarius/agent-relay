@@ -4,11 +4,14 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
 	"syscall"
 	"time"
 
@@ -32,7 +35,7 @@ Usage:
   agent-relay init [flags]       guided setup in the terminal: join with an invite or start your own network
   agent-relay setup [flags]      configure this machine (opens a local setup page; --cli for flags only)
   agent-relay run [-- CMD ...]   run the relay for one agent session (default CMD: sbx run --name <sandbox>)
-  agent-relay serve              run the relay until interrupted
+  agent-relay serve [--notify URL]  run the relay until interrupted; URL gets each received message id
   agent-relay invite FRIEND ...  create an invite for a friend or another machine of yours (see -h)
   agent-relay uninstall          detach the relay from your agents and forget this machine's identity
 `
@@ -45,7 +48,7 @@ func main() {
 	var err error
 	switch os.Args[1] {
 	case "serve":
-		err = cmdServe()
+		err = cmdServe(os.Args[2:])
 	case "run":
 		err = cmdRun(os.Args[2:])
 	case "init", "install":
@@ -77,11 +80,21 @@ func main() {
 	}
 }
 
-func cmdServe() error {
+// cmdServe runs the relay until stopped; --notify <url> posts each received message's id to the app running it.
+func cmdServe(args []string) error {
 	cfg, err := LoadConfig()
 	if err != nil {
 		return err
 	}
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	notify := fs.String("notify", cfg.Notify, "POST {id, from, card} here for each message received (loopback http only)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := checkNotify(*notify); err != nil {
+		return err
+	}
+	cfg.Notify = *notify
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	run, err := StartRelay(ctx, cfg, os.Getenv("TS_AUTHKEY"))
@@ -154,4 +167,16 @@ func sessionLog(name string) (string, error) {
 		return "", err
 	}
 	return dir + "/" + name + ".log", nil
+}
+
+// checkNotify accepts no URL or an http URL on this machine: message ids must not leave it.
+func checkNotify(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "http" || !slices.Contains([]string{"127.0.0.1", "localhost", "::1"}, u.Hostname()) {
+		return fmt.Errorf("--notify must be an http URL on 127.0.0.1 or localhost, got %q", raw)
+	}
+	return nil
 }
