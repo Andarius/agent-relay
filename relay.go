@@ -84,7 +84,7 @@ func StartRelay(ctx context.Context, cfg *Config, authKey string) (*Running, err
 		run.Close()
 		return nil, fmt.Errorf("mcp listen %s: %w", cfg.MCPListen, err)
 	}
-	run.mcpSrv = &http.Server{Handler: relay.MCPHandler(), ReadHeaderTimeout: 10 * time.Second}
+	run.mcpSrv = &http.Server{Handler: relay.LocalHandler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = run.mcpSrv.Serve(mcpLn) }()
 	slog.Info("mcp endpoint up", "addr", cfg.MCPListen, "name", cfg.Name)
 
