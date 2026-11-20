@@ -31,6 +31,8 @@ type Config struct {
 	MCPListen string          `json:"mcp_listen"`
 	SelfLogin string          `json:"self_login,omitempty"`
 	JoinKey   string          `json:"join_key,omitempty"` // SHA-256 of the auth key this identity joined with
+	// Notify gets a POST {id, from, card} for each message received: the app that runs this relay (Trame)
+	Notify string `json:"notify,omitempty"`
 
 	StateDir string `json:"-"`
 	MCPToken string `json:"-"`

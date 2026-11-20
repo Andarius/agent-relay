@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -72,6 +74,7 @@ func TestReceiveAuthorization(t *testing.T) {
 		{"from field is ignored", who("relay-linux-mini", "me@example.com"), `{"id":"` + msgID + `","from":"alice","body":"hi"}`, http.StatusAccepted, "linux-mini"},
 		{"bad id", who("relay-linux-mini", "me@example.com"), `{"id":"nope","body":"hi"}`, http.StatusBadRequest, ""},
 		{"empty body", who("relay-linux-mini", "me@example.com"), `{"id":"` + msgID + `","body":""}`, http.StatusBadRequest, ""},
+		{"bad card", who("relay-linux-mini", "me@example.com"), `{"id":"` + msgID + `","body":"hi","card":"x"}`, http.StatusBadRequest, ""},
 		{"oversized body", who("relay-linux-mini", "me@example.com"), `{"id":"` + msgID + `","body":"` + strings.Repeat("x", maxBody+1) + `"}`, http.StatusBadRequest, ""},
 	}
 	for _, tt := range tests {
@@ -82,7 +85,7 @@ func TestReceiveAuthorization(t *testing.T) {
 			if rec.Code != tt.wantCode {
 				t.Fatalf("code = %d, want %d (%s)", rec.Code, tt.wantCode, rec.Body)
 			}
-			msgs, err := r.store.TakeInbox(context.Background(), false, 10)
+			msgs, err := r.store.TakeInbox(context.Background(), false, 10, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -117,9 +120,80 @@ func TestReceiveIdempotentAndRateLimited(t *testing.T) {
 			t.Fatalf("codes = %v, want %v", codes, want)
 		}
 	}
-	first, _ := r.store.TakeInbox(context.Background(), false, 10)
-	again, _ := r.store.TakeInbox(context.Background(), false, 10)
+	first, _ := r.store.TakeInbox(context.Background(), false, 10, "")
+	again, _ := r.store.TakeInbox(context.Background(), false, 10, "")
 	if len(first) != 1 || len(again) != 0 {
 		t.Fatalf("retry stored %d, second read %d; want 1 then 0", len(first), len(again))
+	}
+}
+
+const cardID = "01a1f963-d635-7cbe-82b0-d6fe93dde960"
+
+func TestCardMessagesAndNotify(t *testing.T) {
+	got := make(chan map[string]string, 2)
+	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var m map[string]string
+		_ = json.NewDecoder(req.Body).Decode(&m)
+		got <- m
+	}))
+	defer app.Close()
+	r, _ := newTestRelay(t, who("relay-linux-mini", "me@example.com"))
+	r.cfg.Notify = app.URL
+	for _, body := range []string{`{"id":"` + msgID + `","body":"about the card","card":"` + cardID + `"}`, `{"id":"358e7970-e82e-430a-871b-afb1a1c7d8f7","body":"plain"}`} {
+		rec := httptest.NewRecorder()
+		r.PeerHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body)))
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("code = %d (%s)", rec.Code, rec.Body)
+		}
+	}
+	// two notifications, in either order: one per message, never with its body
+	notified := map[string]map[string]string{}
+	for range 2 {
+		select {
+		case m := <-got:
+			notified[m["id"]] = m
+		case <-time.After(3 * time.Second):
+			t.Fatal("app not notified")
+		}
+	}
+	if m := notified[msgID]; m["from"] != "linux-mini" || m["card"] != cardID || m["body"] != "" {
+		t.Fatalf("notified %v", notified)
+	}
+	about, _ := r.store.TakeInbox(context.Background(), false, 10, cardID)
+	rest, _ := r.store.TakeInbox(context.Background(), false, 10, "")
+	if len(about) != 1 || about[0].Card != cardID || len(rest) != 1 || rest[0].Card != "" {
+		t.Fatalf("about card %+v, rest %+v", about, rest)
+	}
+}
+
+func TestOldStoreGetsCardColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relay.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE messages (id TEXT PRIMARY KEY, direction TEXT NOT NULL, peer TEXT NOT NULL, login TEXT,
+		body TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.Insert(context.Background(), msgID, "in", "linux-mini", "hi", "", cardID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCheckNotify(t *testing.T) {
+	for raw, ok := range map[string]bool{
+		"": true, "http://127.0.0.1:4100/api/agent-relay": true, "http://localhost:9/x": true,
+		"https://127.0.0.1/x": false, "http://example.com/x": false, "http://10.0.0.2/x": false,
+	} {
+		if err := checkNotify(raw); (err == nil) != ok {
+			t.Errorf("checkNotify(%q) = %v, want ok=%v", raw, err, ok)
+		}
 	}
 }

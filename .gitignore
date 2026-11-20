@@ -1,3 +1,4 @@
 agent-relay
 dist/
 ws/
+.scratch/
