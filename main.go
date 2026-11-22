@@ -38,6 +38,9 @@ Usage:
   agent-relay serve [--notify URL]  run the relay until interrupted; URL gets each received message id
   agent-relay invite FRIEND ...  create an invite for a friend or another machine of yours (see -h)
   agent-relay uninstall          detach the relay from your agents and forget this machine's identity
+  agent-relay local install codex|vibe ...  let agent sessions on this machine message each other
+  agent-relay mcp                local MCP server an agent session runs on stdio (set up by local install)
+  agent-relay hook               agent hook that wakes a session for new local messages (set up by local install)
 `
 
 func main() {
@@ -59,6 +62,12 @@ func main() {
 		err = cmdSetup(os.Args[2:])
 	case "invite":
 		err = cmdInvite(os.Args[2:])
+	case "local":
+		err = cmdLocal(os.Args[2:])
+	case "mcp":
+		err = cmdMCP(os.Args[2:])
+	case "hook":
+		err = cmdHook(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println(version)
 	case "-h", "--help", "help":
@@ -154,16 +163,8 @@ func cmdRun(args []string) error {
 }
 
 func sessionLog(name string) (string, error) {
-	dir := os.Getenv("XDG_STATE_HOME")
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		dir = home + "/.local/state"
-	}
-	dir += "/agent-relay"
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	dir, err := stateRoot()
+	if err != nil {
 		return "", err
 	}
 	return dir + "/" + name + ".log", nil

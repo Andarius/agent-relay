@@ -62,6 +62,18 @@ API token is saved. `agent-relay setup` opens the same configuration as a local 
 Scripted setups: `TS_API_KEY=… agent-relay init --yes --host --handle you --name laptop`, or
 `AGENT_RELAY_INVITE=… agent-relay init --yes --join`.
 
+## Agents on the same machine
+
+`agent-relay local install codex vibe claude` lets Codex, vibe and Claude Code sessions on this machine message each
+other, with no relay, port or tailnet. Each session gets a stdio MCP server (`agent-relay mcp`: `list_agents`, `send_message`,
+`read_inbox`) and hooks (`agent-relay hook`) that share one SQLite file under `~/.local/state/agent-relay/`.
+Codex needs one approval of the new hooks (`/hooks`). `agent-relay local uninstall …` removes all of it.
+
+- A session's name is `$AGENT_RELAY_NAME` (set when launching the agent), else `<agent>-<folder>`.
+- A message sent while the recipient works ends its turn with "new message, call read_inbox"; one sent while it waits
+  for input is typed into its tmux pane, so run sessions in tmux to wake them when idle.
+- Linux only: sessions are found through `/proc`.
+
 ## Security model
 
 - A message is accepted only from a configured peer whose Tailscale node matches both its hostname and its
